@@ -1,0 +1,44 @@
+import (
+	"gitlab.wildberries.ru/finance/go-infrastructure/tracing"
+    "context"
+    "fmt"
+)
+
+{{ $decorator := (or .Vars.DecoratorName (printf "%sWithTracing" .Interface.Name)) }}
+{{ $structName := (or .Vars.DecoratorName (printf "d%s" $decorator)) }}
+{{ $spanName := (or .Vars.InstanceName .Interface.Name) }}
+{{ $setName := (or .Vars.SetName false) }}
+{{ $db := (or .Vars.db false) }}
+
+type (
+    {{$structName}} struct {
+        {{ if $setName }} name string {{ end }}
+        {{.Interface.Type}}
+        _opts []tracing.DBSpanOption
+    }
+)
+
+func New{{$decorator}} ( {{ if $setName }} name string, {{ end }} base {{.Interface.Type}}, opts ...tracing.DBSpanOption) ({{$.Interface.Type}}, error) {
+    if base == nil {
+        return nil, fmt.Errorf("base interface cannot be nil")
+    }
+
+    return &{{$structName}} { {{ if $setName}}
+        name: name, {{ end }}
+        {{.Interface.Name}}: base,
+        _opts: opts,
+    }, nil
+}
+
+{{range $method := .Interface.Methods}}
+    {{if $method.AcceptsContext}}
+        func (_d {{$structName}}) {{$method.Declaration}} {
+            _span, ctx := tracing.{{ if $db }}StartDBSpan{{ else }}StartSpanFromContext{{ end }}(ctx, {{if $setName }}_d.name+".{{$method.Name}}"{{ else }}"{{$.Interface.Name}}.{{$method.Name}}"{{end}})
+            defer func() {
+                _span.FinishWithError(err)
+            }()
+
+            {{$method.Pass (printf "_d.%s." $.Interface.Name) }}
+        }
+    {{end}}
+{{end}}
